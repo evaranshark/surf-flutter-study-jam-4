@@ -39,7 +39,10 @@ class MagicBallScreen extends StatelessWidget {
               child: Center(
                 child: Text(
                   bottomText(),
-                  style: GoogleFonts.rubik(color: Colors.grey),
+                  style: GoogleFonts.rubik(
+                    color: Colors.grey,
+                    fontSize: 16,
+                  ),
                 ),
               ),
             ),
