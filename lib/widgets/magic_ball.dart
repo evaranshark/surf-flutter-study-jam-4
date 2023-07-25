@@ -1,8 +1,9 @@
-import 'package:auto_size_text/auto_size_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shake/shake.dart';
 import 'package:surf_practice_magic_ball/bloc/magic_ball_bloc.dart';
+import 'package:surf_practice_magic_ball/helpers.dart';
 
 class MagicBall extends StatelessWidget {
   const MagicBall({super.key});
@@ -25,7 +26,10 @@ class MagicBallWidget extends StatefulWidget {
 
 class _MagicBallWidgetState extends State<MagicBallWidget>
     with TickerProviderStateMixin {
-  bool loading = false;
+  /// Defines if ball should shake or idle
+  bool shaking = false;
+  final _successColor = Colors.deepPurple;
+  final _errorColor = Colors.red.shade600;
   final _fadeDuration = const Duration(seconds: 2);
 
   //Animates text and ball fade effects
@@ -65,13 +69,14 @@ class _MagicBallWidgetState extends State<MagicBallWidget>
   ));
 
   //Defines what color will [_fadeAnimation] animate to. Affects ball gradient
-  Color targetColor = Colors.deepPurple;
+  late Color targetColor;
 
   late final ShakeDetector detector;
 
   @override
   void initState() {
     super.initState();
+    targetColor = _successColor;
     _fadeController = AnimationController(vsync: this, duration: _fadeDuration);
     _idleController =
         AnimationController(vsync: this, duration: const Duration(seconds: 3));
@@ -93,12 +98,12 @@ class _MagicBallWidgetState extends State<MagicBallWidget>
   ///
   /// Stops idle animation, starts shake and fade effects, triggers data load.
   void onTriggered() {
-    _idleController.animateTo(0.0).then((value) => _idleController.stop());
-    _shakeController.repeat(reverse: true);
-    setState(() {
-      loading = true;
-    });
     if (!_fadeController.isAnimating) {
+      setState(() {
+        shaking = true;
+      });
+      _idleController.animateTo(0.0).then((value) => _idleController.stop());
+      _shakeController.repeat(reverse: true);
       _fadeController
           .forward()
           .then((value) => context.read<MagicBallBloc>().add(Load()));
@@ -109,39 +114,73 @@ class _MagicBallWidgetState extends State<MagicBallWidget>
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTriggered,
-      child: BlocListener<MagicBallBloc, MagicBallBlocState>(
-        listener: (context, state) {
-          if (state is MagicBallLoadingState) {
-            detector.stopListening();
-          } else {
-            detector.startListening();
-            _shakeController
-                .animateTo(0)
-                .then((value) => _shakeController.stop());
-            _idleController.repeat(reverse: true);
-            setState(() {
-              loading = false;
-            });
-          }
-          if (state is MagicBallHasDataState) {
-            setState(() {
-              targetColor = Colors.deepPurple;
-              _fadeAnimation = ColorTween(begin: targetColor, end: Colors.black)
-                  .animate(_fadeController);
-            });
-            _fadeController.reverse();
-          }
-          if (state is MagicBallHasErrorState) {
-            setState(() {
-              targetColor = Colors.red.shade600;
-              _fadeAnimation = ColorTween(begin: targetColor, end: Colors.black)
-                  .animate(_fadeController);
-            });
-            _fadeController.reverse();
-          }
-        },
+      child: MultiBlocListener(
+        listeners: [
+          // When turn into loading state, stop listening to shake moves to avoid excessive operations
+          BlocListener<MagicBallBloc, MagicBallBlocState>(
+            listener: (context, state) {
+              if (Helpers.isMobile) {
+                detector.stopListening();
+              }
+            },
+            listenWhen: (previous, current) {
+              return current is MagicBallLoadingState;
+            },
+          ),
+
+          /// When load completed (or failed):
+          /// * Start listening to shake moves
+          /// * Stop shake animattion
+          /// * Remain idle animation
+          BlocListener<MagicBallBloc, MagicBallBlocState>(
+            listener: (context, state) {
+              if (Helpers.isMobile) {
+                detector.startListening();
+              }
+              _shakeController
+                  .animateTo(0)
+                  .then((value) => _shakeController.stop());
+              _idleController.repeat(reverse: true);
+              setState(() {
+                shaking = false;
+              });
+            },
+            listenWhen: (previous, current) {
+              return previous is MagicBallLoadingState;
+            },
+          ),
+
+          /// If successfully retrieved data, fade in with "success" color
+          BlocListener<MagicBallBloc, MagicBallBlocState>(
+            listener: (context, state) {
+              setState(() {
+                targetColor = _successColor;
+                _fadeAnimation =
+                    ColorTween(begin: targetColor, end: Colors.black)
+                        .animate(_fadeController);
+              });
+              _fadeController.reverse();
+            },
+            listenWhen: (previous, current) => current is MagicBallHasDataState,
+          ),
+
+          /// If data retrieving faile, fade in with "error" color
+          BlocListener<MagicBallBloc, MagicBallBlocState>(
+            listener: (context, state) {
+              setState(() {
+                targetColor = _errorColor;
+                _fadeAnimation =
+                    ColorTween(begin: targetColor, end: Colors.black)
+                        .animate(_fadeController);
+              });
+              _fadeController.reverse();
+            },
+            listenWhen: (previous, current) =>
+                current is MagicBallHasErrorState,
+          )
+        ],
         child: SlideTransition(
-          position: loading ? _shakeAnimation : _idleAnimation,
+          position: shaking ? _shakeAnimation : _idleAnimation,
           child: AnimatedBuilder(
               animation: _fadeAnimation,
               builder: (context, child) {
@@ -163,47 +202,24 @@ class _MagicBallWidgetState extends State<MagicBallWidget>
                         return Container(
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            gradient: RadialGradient(colors: [
-                              _fadeAnimation.value ?? Colors.transparent,
-                              Colors.transparent
-                            ], radius: 1.5, focalRadius: 0.5),
+                            gradient: RadialGradient(
+                              colors: [
+                                _fadeAnimation.value ?? Colors.transparent,
+                                Colors.transparent
+                              ],
+                              radius: 1.5,
+                            ),
                           ),
                           child: AnimatedBuilder(
                               animation: _opacityAnimation,
                               builder: (context, child) {
                                 return Center(
-                                    child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: BlocBuilder<MagicBallBloc,
-                                          MagicBallBlocState>(
-                                      builder: (context, state) {
-                                    if (state is MagicBallHasDataState) {
-                                      return Opacity(
-                                        opacity: _opacityAnimation.value,
-                                        child: AutoSizeText(
-                                          state.data,
-                                          minFontSize: 30,
-                                          maxLines: 3,
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      );
-                                    }
-                                    if (state is MagicBallHasErrorState) {
-                                      return Opacity(
-                                        opacity: _opacityAnimation.value,
-                                        child: AutoSizeText(
-                                          state.error,
-                                          minFontSize: 30,
-                                          maxLines: 3,
-                                          textAlign: TextAlign.center,
-                                        ),
-                                      );
-                                    }
-                                    return Opacity(
-                                      opacity: _opacityAnimation.value,
-                                    );
-                                  }),
-                                ));
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: MagicBallText(
+                                        opacity: _opacityAnimation.value),
+                                  ),
+                                );
                               }),
                         );
                       }),
@@ -211,6 +227,76 @@ class _MagicBallWidgetState extends State<MagicBallWidget>
               }),
         ),
       ),
+    );
+  }
+}
+
+class MagicBallText extends StatelessWidget {
+  const MagicBallText({
+    super.key,
+    required double opacity,
+  }) : _opacity = opacity;
+
+  final double _opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<MagicBallBloc, MagicBallBlocState>(
+        builder: (context, state) {
+      if (state is MagicBallHasDataState) {
+        return Opacity(
+          opacity: _opacity,
+          child: ResponsiveText(
+            text: state.data,
+          ),
+        );
+      }
+      if (state is MagicBallHasErrorState) {
+        return Opacity(
+          opacity: _opacity,
+          child: ResponsiveText(
+            text: state.error,
+          ),
+        );
+      }
+      return Opacity(
+        opacity: _opacity,
+      );
+    });
+  }
+}
+
+class ResponsiveText extends StatelessWidget {
+  final String text;
+  const ResponsiveText({super.key, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    double fontSize;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedWidth) {
+          fontSize = 14;
+        } else {
+          switch (constraints.maxWidth) {
+            case < 100:
+              fontSize = 14;
+            case < 200:
+              fontSize = 16;
+            case < 300:
+              fontSize = 18;
+            case _:
+              fontSize = 24;
+          }
+        }
+        return Text(
+          text,
+          textAlign: TextAlign.center,
+          style: GoogleFonts.rubik(
+            fontSize: fontSize,
+          ),
+        );
+      },
     );
   }
 }
